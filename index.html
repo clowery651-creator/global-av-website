@@ -114,6 +114,21 @@
   .checker-result .r-title{ font-weight:800; margin-bottom:6px; font-size:1rem; }
   .checker-result.in-area .r-title{ color:var(--accent2); }
   .checker-result.out-area .r-title{ color:#ffb43c; }
+  .trip-status{ color:var(--muted); font-size:.82rem; margin-top:10px; min-height:1.2em; }
+  .trip-estimate{ display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+  .trip-estimate.show{ display:block; }
+  .trip-row{ display:flex; gap:28px; flex-wrap:wrap; margin-bottom:14px; }
+  .trip-label{ color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
+  .trip-value{ font-size:1.15rem; font-weight:800; }
+  .trip-inputs{ display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; }
+  .trip-inputs label{ display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted); }
+  .trip-inputs input{
+    width:110px; background:var(--panel2); border:1px solid var(--border); border-radius:8px;
+    padding:8px 10px; color:var(--text); font-size:.9rem; outline:none;
+  }
+  .trip-inputs input:focus{ border-color:var(--accent); }
+  .trip-cost{ font-size:.95rem; }
+  .trip-cost strong{ color:var(--accent2); }
 
   /* Services */
   .grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:20px; margin-top:36px; }
@@ -220,6 +235,19 @@
       <div class="checker-result" id="checkerResult">
         <div class="r-title" id="resultTitle"></div>
         <div id="resultBody"></div>
+        <div class="trip-estimate" id="tripEstimate">
+          <div class="trip-row">
+            <div><div class="trip-label">Distance to your location</div><div class="trip-value" id="tripDistance">—</div></div>
+            <div><div class="trip-label">Approx. drive time</div><div class="trip-value" id="tripDuration">—</div></div>
+          </div>
+          <div class="trip-inputs">
+            <label>Vehicle MPG <input type="number" id="mpgInput" value="18" min="1" step="1"></label>
+            <label>Gas price ($/gal) <input type="number" id="gasPriceInput" value="3.83" min="0" step="0.01"></label>
+          </div>
+          <div class="trip-cost">Estimated round-trip fuel cost: <strong id="tripCost">—</strong></div>
+          <div class="checker-note" style="margin-top:8px;">Estimate only — based on driving distance from <span id="tripHubLabel">our nearest hub</span>, the MPG and gas price above (editable), and does not include labor or a service call fee.</div>
+        </div>
+        <div class="trip-status" id="tripStatus"></div>
       </div>
     </div>
   </section>
@@ -422,26 +450,30 @@
       cities: ["tampa","st petersburg","saint petersburg","clearwater","brandon","riverview","wesley chapel",
         "land o lakes","lutz","carrollwood","town n country","temple terrace","plant city","valrico","seffner",
         "lithia","ruskin","apollo beach","sun city center","largo","pinellas park","dunedin","palm harbor",
-        "oldsmar","safety harbor","new port richey","trinity","odessa","zephyrhills"]
+        "oldsmar","safety harbor","new port richey","trinity","odessa","zephyrhills"],
+      hub: { lat: 27.9506, lon: -82.4572, label: "our Tampa hub" }
     },
     {
       region: "Greater Orlando / Central Florida",
       zipPrefixes: ["327","328","347"],
       cities: ["orlando","winter park","winter garden","kissimmee","sanford","lake mary","altamonte springs",
         "apopka","ocoee","windermere","winter springs","oviedo","casselberry","longwood","clermont","celebration",
-        "lake nona","dr phillips","doctor phillips"]
+        "lake nona","dr phillips","doctor phillips"],
+      hub: { lat: 28.5383, lon: -81.3792, label: "our Orlando hub" }
     },
     {
       region: "Jacksonville / Northeast Florida",
       zipPrefixes: ["320","322"],
       cities: ["jacksonville","jacksonville beach","ponte vedra beach","st augustine","saint augustine",
         "orange park","fleming island","fernandina beach","nocatee","middleburg","green cove springs",
-        "neptune beach","atlantic beach"]
+        "neptune beach","atlantic beach"],
+      hub: { lat: 30.3322, lon: -81.6557, label: "our Jacksonville hub" }
     },
     {
       region: "Sarasota / Bradenton (secondary coverage)",
       zipPrefixes: ["342","341"],
-      cities: ["sarasota","bradenton","venice","lakewood ranch","siesta key"]
+      cities: ["sarasota","bradenton","venice","lakewood ranch","siesta key"],
+      hub: { lat: 27.3364, lon: -82.5307, label: "our Sarasota hub" }
     }
   ];
 
@@ -474,29 +506,104 @@
     var title = document.getElementById('resultTitle');
     var body = document.getElementById('resultBody');
     box.classList.add('show');
+    hideTripEstimate();
 
     if(!match){
       box.classList.remove('in-area'); box.classList.add('out-area');
       title.textContent = "Enter a ZIP code or city";
       body.textContent = "Try a Florida ZIP code (e.g. 33610) or a city name like Tampa, Orlando, or Jacksonville.";
-      return;
+      return null;
     }
 
     if(match.outOfArea){
       box.classList.remove('in-area'); box.classList.add('out-area');
       title.textContent = "Outside our primary service area";
       body.textContent = "We focus on Tampa Bay, Orlando, Jacksonville, and Sarasota/Bradenton, but we do take on larger commercial and institutional projects statewide. Call (813) 458-8900 or send a quote request below and we'll let you know.";
-      return;
+      return null;
     }
 
     box.classList.remove('out-area'); box.classList.add('in-area');
     title.textContent = "Good news — we cover " + match.region + (sourceLabel ? " (" + sourceLabel + ")" : "");
     body.textContent = "Send a quote request below with your project details, or call (813) 458-8900 to talk to our team directly.";
+    return match;
   }
+
+  // ---- Travel mileage & gas cost estimate ----
+  var MILES_PER_METER = 1 / 1609.34;
+  var currentTrip = null; // { miles }
+
+  function hideTripEstimate(){
+    document.getElementById('tripEstimate').classList.remove('show');
+    document.getElementById('tripStatus').textContent = '';
+    currentTrip = null;
+  }
+
+  function setTripStatus(msg){
+    document.getElementById('tripStatus').textContent = msg;
+  }
+
+  function geocodeText(query){
+    var url = "https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=us&limit=1&q=" + encodeURIComponent(query + ", FL");
+    return fetch(url).then(function(r){ return r.json(); }).then(function(results){
+      if(!results || !results.length) throw new Error('no geocode match');
+      return { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
+    });
+  }
+
+  function fetchDrivingRoute(originLat, originLon, destLat, destLon){
+    var url = "https://router.project-osrm.org/route/v1/driving/" +
+      originLon + "," + originLat + ";" + destLon + "," + destLat + "?overview=false";
+    return fetch(url).then(function(r){ return r.json(); }).then(function(data){
+      if(!data.routes || !data.routes.length) throw new Error('no route');
+      var route = data.routes[0];
+      return { meters: route.distance, seconds: route.duration };
+    });
+  }
+
+  function updateTripCost(){
+    if(!currentTrip) return;
+    var mpg = parseFloat(document.getElementById('mpgInput').value) || 18;
+    var price = parseFloat(document.getElementById('gasPriceInput').value) || 0;
+    var roundTripMiles = currentTrip.miles * 2;
+    var gallons = roundTripMiles / mpg;
+    var cost = gallons * price;
+    document.getElementById('tripCost').textContent = '$' + cost.toFixed(2) +
+      ' (' + roundTripMiles.toFixed(1) + ' mi round trip)';
+  }
+
+  function showTripEstimate(destLat, destLon, area){
+    setTripStatus('Calculating driving distance…');
+    fetchDrivingRoute(area.hub.lat, area.hub.lon, destLat, destLon).then(function(route){
+      var miles = route.meters * MILES_PER_METER;
+      var minutes = Math.round(route.seconds / 60);
+      currentTrip = { miles: miles };
+
+      document.getElementById('tripHubLabel').textContent = area.hub.label;
+      document.getElementById('tripDistance').textContent = miles.toFixed(1) + ' mi (one-way)';
+      document.getElementById('tripDuration').textContent = minutes + ' min';
+      updateTripCost();
+
+      document.getElementById('tripEstimate').classList.add('show');
+      setTripStatus('');
+    }).catch(function(){
+      hideTripEstimate();
+      setTripStatus("Couldn't calculate driving distance right now — coverage above is still accurate.");
+    });
+  }
+
+  document.getElementById('mpgInput').addEventListener('input', updateTripCost);
+  document.getElementById('gasPriceInput').addEventListener('input', updateTripCost);
 
   document.getElementById('checkBtn').addEventListener('click', function(){
     var val = document.getElementById('locInput').value;
-    renderResult(matchLocation(val));
+    var match = renderResult(matchLocation(val));
+    if(match && val.trim()){
+      geocodeText(val).then(function(coords){
+        showTripEstimate(coords.lat, coords.lon, match);
+      }).catch(function(){
+        setTripStatus("Couldn't pinpoint that location for a distance estimate — coverage above is still accurate.");
+      });
+    }
   });
   document.getElementById('locInput').addEventListener('keydown', function(e){
     if(e.key === 'Enter'){ document.getElementById('checkBtn').click(); }
@@ -509,12 +616,14 @@
 
     if(!navigator.geolocation){
       box.classList.add('show'); box.classList.remove('in-area'); box.classList.add('out-area');
+      hideTripEstimate();
       title.textContent = "Location isn't available in this browser";
       body.textContent = "Please enter your ZIP code or city instead.";
       return;
     }
 
     box.classList.add('show'); box.classList.remove('in-area','out-area');
+    hideTripEstimate();
     title.textContent = "Finding your location…";
     body.textContent = "";
 
@@ -527,8 +636,9 @@
           var place = addr.city || addr.town || addr.village || addr.county || "";
           var zip = addr.postcode || "";
           var query = (place + " " + zip).trim();
-          renderResult(matchLocation(query || place), "near " + (place || "your location"));
+          var match = renderResult(matchLocation(query || place), "near " + (place || "your location"));
           document.getElementById('locInput').value = place;
+          if(match){ showTripEstimate(lat, lon, match); }
         })
         .catch(function(){
           box.classList.remove('in-area'); box.classList.add('out-area');
