@@ -424,7 +424,7 @@
           <label for="fMsg">Project details</label>
           <textarea id="fMsg" placeholder="e.g. Mounting a 65&quot; TV and adding a security camera at the front door"></textarea>
         </div>
-        <button type="submit" class="btn btn-primary btn-block">Send Quote Request</button>
+        <button type="submit" class="btn btn-primary btn-block" id="quoteSubmitBtn">Send Quote Request</button>
         <div class="form-status" id="formStatus"></div>
       </form>
     </div>
@@ -653,6 +653,8 @@
   });
 
   // ---- Quote form ----
+  var QUOTE_DEST_EMAIL = "clowery651@gmail.com"; // switch to info@globalavfl.com once that inbox confirms FormSubmit activation
+
   document.getElementById('quoteForm').addEventListener('submit', function(e){
     e.preventDefault();
     var name = document.getElementById('fName').value.trim();
@@ -660,13 +662,30 @@
     var contact = document.getElementById('fContact').value.trim();
     var msg = document.getElementById('fMsg').value.trim();
     var status = document.getElementById('formStatus');
+    var submitBtn = document.getElementById('quoteSubmitBtn');
 
     var subject = "Quote request from " + name + " (" + zip + ")";
-    var body = "Name: " + name + "\nLocation: " + zip + "\nContact: " + contact + "\n\nProject details:\n" + msg;
-    var mailto = "mailto:info@globalavfl.com?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+    var mailtoFallback = function(){
+      var body = "Name: " + name + "\nLocation: " + zip + "\nContact: " + contact + "\n\nProject details:\n" + msg;
+      window.location.href = "mailto:" + QUOTE_DEST_EMAIL + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+      status.textContent = "Couldn't send automatically — opening your email app instead.";
+    };
 
-    window.location.href = mailto;
-    status.textContent = "Opening your email app to send this request to info@globalavfl.com…";
+    submitBtn.disabled = true;
+    status.textContent = "Sending…";
+
+    fetch("https://formsubmit.co/ajax/" + QUOTE_DEST_EMAIL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ name: name, location: zip, contact: contact, message: msg, _subject: subject })
+    }).then(function(r){
+      if(!r.ok) throw new Error('form submit failed');
+      return r.json();
+    }).then(function(){
+      status.textContent = "Thanks — your request was sent. We'll be in touch shortly.";
+      document.getElementById('quoteForm').reset();
+    }).catch(mailtoFallback)
+      .finally(function(){ submitBtn.disabled = false; });
   });
 })();
 </script>
